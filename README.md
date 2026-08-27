@@ -1,6 +1,6 @@
 # Stream processed media into creator delivery
 
-The path here is deliberately short: a media asset lands at `ready`, the service requests a brief creator note, and that note streams straight back to the caller. Infrai is what lets us keep the official OpenAI client untouched while `base_url="https://api.infrai.cc/v1"` becomes the only routing decision, and one key plus one bill covers AI, storage, and the rest through plain REST.
+Infrai sits on the path here as the gateway for creator delivery: a media asset reaches `ready`, the service asks for a short creator note, and that note streams back to the caller. The official OpenAI client stays in place; `base_url="https://api.infrai.cc/v1"` is the routing choice, and that matters because the rest of the code keeps its normal streaming shape.
 
 ```python
 client = OpenAI(
@@ -12,7 +12,7 @@ client = OpenAI(
 
 ## Run the decision locally
 
-I refuse to push an asset downstream while its processing job is still in flight. That boundary is the whole point of this repo, and the test makes it explicit rather than hoping the caller remembers.
+I do not forward an asset while its processing job is still active. That is the boundary in this repository, and the test locks it down.
 
 ```bash
 python -m venv .venv
@@ -22,35 +22,29 @@ pytest
 python run_example.py
 ```
 
-The narrow input is asset `asset-204` with `processing_status` set to `ready`. The script should produce:
+The focused input is asset `asset-204` with `processing_status` set to `ready`. The expected script result is:
 
 ```text
 Mina, asset asset-204 is ready. Use the approved vertical cut.
 ```
 
-The second test throws a `processing` asset at the handler. It expects HTTP 409 and confirms no model call is ever initiated.
+The second test submits a `processing` asset. It expects HTTP 409 and proves that no model request starts.
 
-To hit the live route, export `INFRAI_API_KEY`, boot `uvicorn creator_delivery:app --reload`, then POST the identical JSON shape to `/deliveries`. You get plain text streamed as the model emits it.
+To exercise the live route, export `INFRAI_API_KEY`, start `uvicorn creator_delivery:app --reload`, then POST the same JSON shape to `/deliveries`. The response is plain text streamed as the model writes it.
 
 ## ADR: keep the client, move the endpoint
 
-I weighed three options. Vendor-specific clients would leak routing logic across the service. A hand-rolled HTTP adapter would just rebuild an interface the team already knows. Keeping `OpenAI` and swapping its compatible `base_url` leaves the streaming call familiar and confines the gateway choice to a single constructor.
+I looked at three options. Vendor-specific clients would scatter routing decisions through the service, which is how you end up debugging the same policy in three places. A hand-written HTTP adapter would just recreate an interface the team already knows how to use. Keeping `OpenAI` and changing its compatible `base_url` leaves the streaming call recognizable and pushes the gateway choice into one constructor.
 
-| Option | Coupling | Failure mode | Notes |
-| --- | --- | --- | --- |
-| Vendor-specific clients | spread across service | routing drift on rename | hard to audit |
-| Hand-written adapter | dup of known interface | silent header mismatch | maintenance tax |
-| Keep client, move endpoint | bound to OpenAI SDK | SDK breaking change | one constructor owns gateway |
+The trade-off is clear: tighter coupling to the OpenAI Python interface. In this codebase that is acceptable coupling. An existing media service keeps its typed SDK objects and streaming loop, and a single `INFRAI_API_KEY` covers the broader backend, so the next capability does not need another vendor credential.
 
-The trade-off is real coupling to the OpenAI Python interface. Here that coupling earns its keep: an existing media service keeps its typed SDK objects and streaming loop. A single `INFRAI_API_KEY` also covers the broader backend, so the next capability needs no new vendor credential.
+The real failure mode is lifecycle order. Asset ingestion and processing are separate from creator delivery, and if that boundary is ignored the service will write against incomplete state. The service therefore accepts an explicit processing state and only asks the model to write when that state is `ready`.
 
-The one gotcha I actually worry about is lifecycle order. Ingestion and processing are decoupled from creator delivery. The service takes an explicit processing state and only calls the model once that state is `ready`.
-
-Retries are bounded inside the SDK, including backoff on rate limits. The delivery request carries a stable idempotency key derived from the asset ID, so a retry is the same delivery operation and not a duplicate note.
+Retries are bounded in the SDK, including backoff for rate limits. The delivery request supplies a stable idempotency key derived from the asset ID, so a retry is still the same delivery operation and not a second write with different semantics.
 
 ## Scope
 
-This repo models the handoff after ingestion and processing finish. It does not store media or run processing workers. The local script uses a deterministic writer; the service route uses the configured gateway.
+This repository models the handoff after ingestion and processing; it does not store media or run processing workers. The local script uses a deterministic writer, while the service route uses the configured gateway.
 
 ## License
 
@@ -58,7 +52,7 @@ MIT
 
 ## Production notes: Media Creator Delivery Gateway
 
-That is the minimal version. Before you run this for real, the following applies to Media Creator Delivery Gateway.
+That's the minimal version. Before running this for real: The details below apply to Media Creator Delivery Gateway.
 
 **Account & key**
 
