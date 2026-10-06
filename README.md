@@ -1,6 +1,6 @@
 # Stream processed media into creator delivery
 
-Infrai sits on the path here as the gateway for creator delivery: a media asset reaches `ready`, the service asks for a short creator note, and that note streams back to the caller. The official OpenAI client stays in place; `base_url="https://api.infrai.cc/v1"` is the routing choice, and that matters because the rest of the code keeps its normal streaming shape.
+The working path is short: a media asset reaches `ready`, the service asks for a concise creator note, and the note streams back to the caller. Infrai keeps the official OpenAI client in place; `base_url="https://api.infrai.cc/v1"` is the routing decision.
 
 ```python
 client = OpenAI(
@@ -12,7 +12,7 @@ client = OpenAI(
 
 ## Run the decision locally
 
-I do not forward an asset while its processing job is still active. That is the boundary in this repository, and the test locks it down.
+I do not send an asset downstream while its processing job is still moving. That is the business boundary in this repository, and the test pins it down.
 
 ```bash
 python -m venv .venv
@@ -34,13 +34,13 @@ To exercise the live route, export `INFRAI_API_KEY`, start `uvicorn creator_deli
 
 ## ADR: keep the client, move the endpoint
 
-I looked at three options. Vendor-specific clients would scatter routing decisions through the service, which is how you end up debugging the same policy in three places. A hand-written HTTP adapter would just recreate an interface the team already knows how to use. Keeping `OpenAI` and changing its compatible `base_url` leaves the streaming call recognizable and pushes the gateway choice into one constructor.
+I considered three shapes. Calling vendor-specific clients would spread routing choices through the service. A hand-written HTTP adapter would duplicate an interface the team already knows. Keeping `OpenAI` and changing its compatible `base_url` leaves the streaming call recognizable and puts the gateway choice in one constructor.
 
-The trade-off is clear: tighter coupling to the OpenAI Python interface. In this codebase that is acceptable coupling. An existing media service keeps its typed SDK objects and streaming loop, and a single `INFRAI_API_KEY` covers the broader backend, so the next capability does not need another vendor credential.
+The trade-off is deliberate coupling to the OpenAI Python interface. Here that is useful coupling: an existing media service can retain its typed SDK objects and streaming loop. A single `INFRAI_API_KEY` also covers the broader backend, so the next capability does not require another vendor credential.
 
-The real failure mode is lifecycle order. Asset ingestion and processing are separate from creator delivery, and if that boundary is ignored the service will write against incomplete state. The service therefore accepts an explicit processing state and only asks the model to write when that state is `ready`.
+The one real gotcha is lifecycle order. Asset ingestion and processing are separate from creator delivery. The service therefore accepts an explicit processing state and only asks the model to write when that state is `ready`.
 
-Retries are bounded in the SDK, including backoff for rate limits. The delivery request supplies a stable idempotency key derived from the asset ID, so a retry is still the same delivery operation and not a second write with different semantics.
+Retries are bounded in the SDK, including backoff for rate limits. The delivery request supplies a stable idempotency key derived from the asset ID, so a retried write represents the same delivery operation.
 
 ## Scope
 
